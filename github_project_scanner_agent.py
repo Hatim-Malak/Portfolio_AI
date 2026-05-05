@@ -16,7 +16,8 @@ from schemas.schema import list_serial
 from bson import ObjectId
 from langgraph.types import Send
 from typing import Literal
-
+from pymongo import UpdateOne
+import time
 
 load_dotenv()
 
@@ -30,6 +31,7 @@ class SubGraphState(TypedDict):
     languages:dict
     mobile_url:str
     desktop_url:str
+    updated_at: str
 
 class SuperGraphState(TypedDict):
     details:Annotated[list[dict],operator.add]
@@ -70,7 +72,21 @@ def subGraph() -> StateGraph:
         )
         ])
         formatted_message = prompt.format_messages(readme=state["readme"])
-        result = detail_llm.invoke(formatted_message)
+        result = None
+        for attempt in range(5): 
+            try:
+                result = detail_llm.invoke(formatted_message)
+                break 
+            except Exception as e:
+                if "429" in str(e) or "rate_limit" in str(e).lower():
+                    print(f"Groq Rate Limit hit for {state['title']}. Waiting 10 seconds... (Attempt {attempt+1}/5)")
+                    time.sleep(10)
+                else:
+                    print(f"Groq error: {e}")
+                    raise e 
+                    
+        if not result:
+            return {"description": "Description generation failed.", "languages": {}}
         
         return {
             "description":result.description,
@@ -96,24 +112,32 @@ def subGraph() -> StateGraph:
         for view_name, (w, h) in dims.items():
             api_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={w}&height={h}&nologo=true&seed={os.urandom(4).hex()}"
             
-            print(f"Fetching {view_name} view...")
-            time = 30
-            if(view_name == "desktop"):
-                time = 30
-            else:
-                time = 90
-            
-            try:
-                response = requests.get(api_url, timeout=time)
-                if response.status_code == 200:
-                    url = upload_bytes_to_cloudinary(response.content)
-                    if url:
-                        updates[f"{view_name}_url"] = url
-                        print(f"✅ Uploaded {view_name}")
-                else:
-                    print(f"❌ Pollinations failed: {response.status_code}")
-            except Exception as e:
-                print(f"⚠️ Error during {view_name} request: {e}")
+            for attempt in range(4): 
+                print(f"Fetching {view_name} view for {state['title']} (Attempt {attempt+1})...")
+                
+                time.sleep(2) 
+                
+                try:
+                    response = requests.get(api_url, timeout=60)
+                    
+                    if response.status_code == 200:
+                        url = upload_bytes_to_cloudinary(response.content)
+                        if url:
+                            updates[f"{view_name}_url"] = url
+                            print(f"Uploaded {view_name} for {state['title']}")
+                            break 
+                            
+                    elif response.status_code == 429:
+                        print(f"🚦 Pollinations Rate Limit (429) for {state['title']}. Cooling down for 15s...")
+                        time.sleep(15)
+                        
+                    else:
+                        print(f"Pollinations failed: {response.status_code}")
+                        break 
+                    
+                except Exception as e:
+                    print(f"Error during {view_name} request: {e}")
+                    time.sleep(5)
         
         return updates
     
@@ -136,32 +160,42 @@ def fetch_all_repos_and_readmes(state:SuperGraphState) -> dict:
     """Iterates through all repositories and fetches their README content."""
     try:
         projects = list_serial(collection_name.find())
+        existing_projects_map = {p["title"]: str(p.get("updated_at")) for p in projects}
         g = Github(github_token)
         user = g.get_user()
         
         repos = user.get_repos()
         ls = []
         for repo in repos:
-            for project in projects:
-                if repo.name == project["title"] or repo.updated_at == project["updated_at"]:
-                    continue
-                  
-                print(f"--- Processing: {repo.full_name} ---")
-                try:
-                    readme = repo.get_readme()
-                    readme_content = base64.b64decode(readme.content).decode('utf-8')
-                    
-                    project_data = {
-                        "title": repo.name,                        
-                        "readme": readme_content
-                    }
-                    ls.append(project_data)
-                    print(f"Successfully fetched data for {repo.name}")
-                    print(readme_content)
+            repo_updated_str = str(repo.updated_at)
+            
+            if repo.name in existing_projects_map:
+                db_updated_str = existing_projects_map[repo.name]
                 
-                except Exception:
-                    print(f"No README found for {repo.name}, skipping...")
-                    continue
+                if repo_updated_str == db_updated_str:
+                    continue 
+                else:
+                    print(f"Update detected for {repo.name}! Processing new changes...")
+            else:
+                print(f"New project found: {repo.name}!")
+                
+            print(f"--- Processing: {repo.full_name} ---")
+            try:
+                readme = repo.get_readme()
+                readme_content = base64.b64decode(readme.content).decode('utf-8')
+                
+                project_data = {
+                    "title": repo.name,                        
+                    "readme": readme_content,
+                    "updated_at":repo_updated_str
+                }
+                ls.append(project_data)
+                print(f"Successfully fetched data for {repo.name}")
+                print(readme_content)
+            
+            except Exception:
+                print(f"No README found for {repo.name}, skipping...")
+                continue
         if ls == []:
             return {
                 "route":"end"
@@ -178,7 +212,7 @@ def dispatch_sub_graph(state:SuperGraphState) -> list[Send]:
     if state.get("route") == "end":
         return END
     return [
-        Send("run_project_subgraph",{"title":detail["title"],"readme":detail["readme"]}) for detail in state["details"] 
+        Send("run_project_subgraph",{"title":detail["title"],"readme":detail["readme"],"updated_at":detail["updated_at"]}) for detail in state["details"] 
     ]
 
 def save_projects(state:SuperGraphState) -> dict:
@@ -192,8 +226,18 @@ def save_projects(state:SuperGraphState) -> dict:
     print(f"Preparing project to save {len(completed_projects)} projects to mongodb")
     
     try:
-        collection_name.insert_many(completed_projects)
-        print("Successfully savced all the projects to mongodb")
+        operations = []
+        for project in completed_projects:
+            operation = UpdateOne(
+                {"title": project["title"]}, 
+                {"$set": project}, 
+                upsert=True
+            )
+            operations.append(operation)
+            
+        if operations:
+            result = collection_name.bulk_write(operations)
+            print(f"Successfully saved! Inserted: {result.upserted_count}, Updated: {result.modified_count}")
     
     except Exception as e:
         print(f"Error saving to mongodb: {str(e)}")
@@ -201,13 +245,24 @@ def save_projects(state:SuperGraphState) -> dict:
     return state
 
 
+def build_portfolio_agent():
+    """Builds and compiles the SuperGraph"""
+    graph = StateGraph(SuperGraphState)
+    graph.add_node("fetch_all_repos_and_readmes",fetch_all_repos_and_readmes)
+    graph.add_node("run_project_subgraph",run_project_subgraph)
+    graph.add_node("save_projects",save_projects)
 
-graph = StateGraph(SuperGraphState)
-graph.add_node("fetch_all_repos_and_readmes",fetch_all_repos_and_readmes)
-graph.add_node("run_project_subgraph",run_project_subgraph)
-graph.add_node("save_projects",save_projects)
+    graph.add_edge(START,"fetch_all_repos_and_readmes")
+    graph.add_conditional_edges("fetch_all_repos_and_readmes",dispatch_sub_graph)
+    graph.add_edge("run_project_subgraph","save_projects")
+    graph.add_edge("save_projects",END)
 
-graph.add_edge(START,"fetch_all_repos_and_readmes")
-graph.add_conditional_edges("fetch_all_repos_and_readmes",dispatch_sub_graph)
-graph.add_edge("run_project_subgraph","save_projects")
-graph.add_edge("save_projects",END)
+    app = graph.compile()
+    png_bytes = app.get_graph().draw_mermaid_png()
+    with open("project_scanner.png","wb") as f:
+        f.write(png_bytes)
+    return app
+
+if __name__ == "__main__":
+    agent = build_portfolio_agent()
+    agent.invoke({})
