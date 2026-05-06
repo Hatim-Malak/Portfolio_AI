@@ -18,9 +18,12 @@ from langgraph.types import Send
 from typing import Literal
 from pymongo import UpdateOne
 import time
-
+import random
+from huggingface_hub import InferenceClient
+import threading
 load_dotenv()
 
+hf_lock = threading.Lock()
 github_token = os.getenv("GITHUB_API")
 llm = ChatGroq(model="llama-3.1-8b-instant",temperature=0.5)
 
@@ -95,52 +98,65 @@ def subGraph() -> StateGraph:
     
     def image_generator(state:SubGraphState) -> dict:
         refined_prompt = (
-            f"Isometric 3D tech illustration of {state["description"]}, "
-            f"featuring a clean dashboard UI, glowing data nodes, "
-            f"frosted glass texture (glassmorphism), high-tech digital interface, "
-            f"minimalist workspace background, vibrant blue accents on a dark theme, "
-            f"4k resolution, Unreal Engine 5 render style, professional SaaS product aesthetic"
+            f"mdjrny-v4 style, Award-winning UI UX mockup of a SaaS dashboard for: {state['description']}. "
+            f"Clean modern web design, dark mode, vibrant neon blue and purple accents, "
+            f"glassmorphism, high resolution, professional Dribbble style, Behance style"
         )
-        encoded_prompt = requests.utils.quote(refined_prompt)
+        
+        # 100% Free Tier Model - No agreements needed
+        API_URL = "https://api-inference.huggingface.co/models/prompthero/openjourney"
+        headers = {"Authorization": f"Bearer {os.getenv('HF_TOKEN')}"}
         
         dims = {
-        "desktop": (1920, 1080),
-        "mobile": (1080, 1920)
+            "desktop": (768, 512),
+            "mobile": (512, 768)
         }
         updates = {}
-
+        
         for view_name, (w, h) in dims.items():
-            api_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={w}&height={h}&nologo=true&seed={os.urandom(4).hex()}"
-            
-            for attempt in range(4): 
-                print(f"Fetching {view_name} view for {state['title']} (Attempt {attempt+1})...")
-                
-                time.sleep(2) 
+            for attempt in range(4):
+                print(f"🚀 Fetching {view_name} for {state['title']} via Hugging Face...")
                 
                 try:
-                    response = requests.get(api_url, timeout=60)
+                    # --- THE LOCK ---
+                    with hf_lock:
+                        print(f"🚦 [LOCK] Waiting 5s to respect Hugging Face free tier...")
+                        time.sleep(5)
+                        
+                        # Using standard 'requests' instead of HuggingFace library
+                        response = requests.post(
+                            API_URL, 
+                            headers=headers, 
+                            json={
+                                "inputs": refined_prompt,
+                                "parameters": {"width": w, "height": h}
+                            },
+                            timeout=60
+                        )
+                    # ----------------
                     
                     if response.status_code == 200:
+                        # response.content contains the raw image bytes!
                         url = upload_bytes_to_cloudinary(response.content)
                         if url:
                             updates[f"{view_name}_url"] = url
-                            print(f"Uploaded {view_name} for {state['title']}")
+                            print(f"✅ Successfully uploaded {view_name} for {state['title']}")
                             break 
-                            
+                    elif response.status_code == 503:
+                        print(f"⏳ Model is warming up. Waiting 20s...")
+                        time.sleep(20)
                     elif response.status_code == 429:
-                        print(f"🚦 Pollinations Rate Limit (429) for {state['title']}. Cooling down for 15s...")
+                        print(f"🚦 Rate limited. Waiting 15s...")
                         time.sleep(15)
-                        
                     else:
-                        print(f"Pollinations failed: {response.status_code}")
-                        break 
-                    
+                        print(f"❌ HF Error {response.status_code}: {response.text}")
+                        time.sleep(5)
+                        
                 except Exception as e:
-                    print(f"Error during {view_name} request: {e}")
+                    print(f"⚠️ Request failed: {str(e)}")
                     time.sleep(5)
-        
+                    
         return updates
-    
     graph = StateGraph(SubGraphState)
     graph.add_node("detail_generator",detail_generator)
     graph.add_node("image_generator",image_generator)
@@ -167,6 +183,10 @@ def fetch_all_repos_and_readmes(state:SuperGraphState) -> dict:
         repos = user.get_repos()
         ls = []
         for repo in repos:
+            if len(ls) >= 5:
+                print("\n✋ Reached batch limit of 5 projects. Stopping fetch for this run.")
+                break
+            
             repo_updated_str = str(repo.updated_at)
             
             if repo.name in existing_projects_map:
