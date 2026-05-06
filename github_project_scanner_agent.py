@@ -23,7 +23,7 @@ from huggingface_hub import InferenceClient
 import threading
 load_dotenv()
 
-hf_lock = threading.Lock()
+cf_lock = threading.Lock()
 github_token = os.getenv("GITHUB_API")
 llm = ChatGroq(model="llama-3.1-8b-instant",temperature=0.5)
 
@@ -98,58 +98,56 @@ def subGraph() -> StateGraph:
     
     def image_generator(state:SubGraphState) -> dict:
         refined_prompt = (
-            f"mdjrny-v4 style, Award-winning UI UX mockup of a SaaS dashboard for: {state['description']}. "
-            f"Clean modern web design, dark mode, vibrant neon blue and purple accents, "
-            f"glassmorphism, high resolution, professional Dribbble style, Behance style"
+            f"A beautiful, high-resolution UI/UX mockup of a SaaS web application for: {state['description']}. "
+            f"The interface features a dark mode theme with glowing neon blue and purple accents. "
+            f"It has frosted glassmorphism panels, clean typography, and a professional Dribbble portfolio aesthetic. "
+            f"Displayed in 3D isometric perspective."
         )
         
-        # 100% Free Tier Model - No agreements needed
-        API_URL = "https://api-inference.huggingface.co/models/prompthero/openjourney"
-        headers = {"Authorization": f"Bearer {os.getenv('HF_TOKEN')}"}
+        # Point to your custom Cloudflare Worker
+        API_URL = os.getenv("CLOUDFLARE_WORKER_URL")
+        
+        # Optional: If you secured your worker, pass the token. Otherwise, an empty dict is fine.
+        headers = {"Authorization": f"Bearer {os.getenv('CLOUDFLARE_API_KEY')}"} if os.getenv('CLOUDFLARE_API_KEY') else {}
         
         dims = {
-            "desktop": (768, 512),
-            "mobile": (512, 768)
+            "desktop": (1024, 768),
+            "mobile": (768, 1024)
         }
         updates = {}
         
         for view_name, (w, h) in dims.items():
             for attempt in range(4):
-                print(f"🚀 Fetching {view_name} for {state['title']} via Hugging Face...")
+                print(f"🚀 Fetching {view_name} for {state['title']} via YOUR Cloudflare Worker...")
                 
                 try:
-                    # --- THE LOCK ---
-                    with hf_lock:
-                        print(f"🚦 [LOCK] Waiting 5s to respect Hugging Face free tier...")
-                        time.sleep(5)
+                    # --- YOUR CUSTOM LOCK ---
+                    with cf_lock:
+                        time.sleep(2) # Just a small 2-second buffer
                         
-                        # Using standard 'requests' instead of HuggingFace library
+                        # Make sure the JSON keys match what your Worker is expecting!
+                        # Most basic CF setups expect {"prompt": "..."}
                         response = requests.post(
                             API_URL, 
                             headers=headers, 
                             json={
-                                "inputs": refined_prompt,
-                                "parameters": {"width": w, "height": h}
+                                "prompt": refined_prompt,
+                                # Optional: pass w/h if your worker code is written to accept them
+                                # "width": w, "height": h 
                             },
                             timeout=60
                         )
-                    # ----------------
+                    # -------------------------
                     
                     if response.status_code == 200:
-                        # response.content contains the raw image bytes!
+                        # Cloudflare workers usually return raw image bytes, which Cloudinary accepts instantly
                         url = upload_bytes_to_cloudinary(response.content)
                         if url:
                             updates[f"{view_name}_url"] = url
                             print(f"✅ Successfully uploaded {view_name} for {state['title']}")
                             break 
-                    elif response.status_code == 503:
-                        print(f"⏳ Model is warming up. Waiting 20s...")
-                        time.sleep(20)
-                    elif response.status_code == 429:
-                        print(f"🚦 Rate limited. Waiting 15s...")
-                        time.sleep(15)
                     else:
-                        print(f"❌ HF Error {response.status_code}: {response.text}")
+                        print(f"❌ Worker Error {response.status_code}: {response.text}")
                         time.sleep(5)
                         
                 except Exception as e:
