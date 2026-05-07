@@ -144,14 +144,14 @@ def subGraph() -> StateGraph:
                         url = upload_bytes_to_cloudinary(response.content)
                         if url:
                             updates[f"{view_name}_url"] = url
-                            print(f"✅ Successfully uploaded {view_name} for {state['title']}")
+                            print(f"Successfully uploaded {view_name} for {state['title']}")
                             break 
                     else:
-                        print(f"❌ Worker Error {response.status_code}: {response.text}")
+                        print(f"Worker Error {response.status_code}: {response.text}")
                         time.sleep(5)
                         
                 except Exception as e:
-                    print(f"⚠️ Request failed: {str(e)}")
+                    print(f"Request failed: {str(e)}")
                     time.sleep(5)
                     
         return updates
@@ -235,7 +235,7 @@ def dispatch_sub_graph(state:SuperGraphState) -> list[Send]:
 
 def save_projects(state:SuperGraphState) -> dict:
     """Takes the aggregated list of project and save it to mongodb"""
-    completed_projects = state.get("projects",[])
+    completed_projects = state.get("projects",[])   
     
     if not completed_projects:
         print("No new project to save")

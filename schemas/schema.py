@@ -2,9 +2,11 @@ def individual_serial(project) -> dict:
     return {
         "id":str(project["_id"]),
         "title":project["title"],
-        "full_name":project["full_name"],
         "readme":project["readme"],
-        "url":project["url"],
+        "description":project["description"],
+        "languages":project["languages"],
+        "mobile_url":project["mobile_url"],
+        "desktop_url":project["desktop_url"],
         "updated_at":project["updated_at"],
     }
 
