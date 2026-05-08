@@ -8,3 +8,5 @@ class Project(BaseModel):
     mobile_url:str
     desktop_url:str
     updated_at:str
+    github_link:str
+    live_link:str

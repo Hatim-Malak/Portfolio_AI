@@ -35,6 +35,8 @@ class SubGraphState(TypedDict):
     mobile_url:str
     desktop_url:str
     updated_at: str
+    github_link:str
+    live_link:str
 
 class SuperGraphState(TypedDict):
     details:Annotated[list[dict],operator.add]
@@ -174,18 +176,20 @@ def fetch_all_repos_and_readmes(state:SuperGraphState) -> dict:
     """Iterates through all repositories and fetches their README content."""
     try:
         projects = list_serial(collection_name.find())
+        ignore_repo = ["Hatim-Malak","spring-boot-demo","spring_security","lunaris"]
         existing_projects_map = {p["title"]: str(p.get("updated_at")) for p in projects}
         g = Github(github_token)
-        user = g.get_user()
-        
+        user = g.get_user()    
         repos = user.get_repos()
         ls = []
         for repo in repos:
             if len(ls) >= 5:
-                print("\n✋ Reached batch limit of 5 projects. Stopping fetch for this run.")
+                print("\nReached batch limit of 5 projects. Stopping fetch for this run.")
                 break
             
             repo_updated_str = str(repo.updated_at)
+            if repo.name in ignore_repo:
+                continue
             
             if repo.name in existing_projects_map:
                 db_updated_str = existing_projects_map[repo.name]
@@ -201,11 +205,15 @@ def fetch_all_repos_and_readmes(state:SuperGraphState) -> dict:
             try:
                 readme = repo.get_readme()
                 readme_content = base64.b64decode(readme.content).decode('utf-8')
-                
+                github_link = repo.html_url
+                live_link = repo.homepage
+    
                 project_data = {
                     "title": repo.name,                        
                     "readme": readme_content,
-                    "updated_at":repo_updated_str
+                    "updated_at":repo_updated_str,
+                    "github_link":github_link,
+                    "live_link":live_link,
                 }
                 ls.append(project_data)
                 print(f"Successfully fetched data for {repo.name}")
@@ -224,13 +232,14 @@ def fetch_all_repos_and_readmes(state:SuperGraphState) -> dict:
         }
     except Exception as e:
         print(f"Critical error: {str(e)}")
+        return {"route": "end"}
         
 def dispatch_sub_graph(state:SuperGraphState) -> list[Send]:
     """Dynamically create parallel subgraph task using send api"""
     if state.get("route") == "end":
         return END
     return [
-        Send("run_project_subgraph",{"title":detail["title"],"readme":detail["readme"],"updated_at":detail["updated_at"]}) for detail in state["details"] 
+        Send("run_project_subgraph",{"title":detail["title"],"readme":detail["readme"],"updated_at":detail["updated_at"],"github_link":detail["github_link"],"live_link":detail["live_link"]}) for detail in state["details"] 
     ]
 
 def save_projects(state:SuperGraphState) -> dict:

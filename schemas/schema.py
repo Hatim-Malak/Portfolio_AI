@@ -8,6 +8,8 @@ def individual_serial(project) -> dict:
         "mobile_url":project["mobile_url"],
         "desktop_url":project["desktop_url"],
         "updated_at":project["updated_at"],
+        "github_link":project["github_link"],
+        "live_link":project["live_link"]
     }
 
 def list_serial(projects) -> list:
