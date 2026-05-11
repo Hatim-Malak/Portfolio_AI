@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        /* ATS-Friendly & Professional Styling */
+        @page {
+            size: A4;
+            margin: 20mm;
+        }
+        body {
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            color: #323643; /* Your preferred charcoal color */
+            line-height: 1.4;
+            font-size: 11pt;
+        }
+        h1 {
+            font-size: 24pt;
+            margin-bottom: 5px;
+            text-align: center;
+            color: #000;
+        }
+        .contact-info {
+            text-align: center;
+            font-size: 10pt;
+            margin-bottom: 20px;
+        }
+        h2 {
+            font-size: 14pt;
+            border-bottom: 1px solid #323643;
+            padding-bottom: 3px;
+            margin-top: 20px;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+        }
+        .item-header {
+            display: flex;
+            justify-content: space-between;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .item-subtitle {
+            font-style: italic;
+            margin-bottom: 5px;
+        }
+        ul {
+            margin-top: 0;
+            padding-left: 20px;
+        }
+        li {
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>{{ name }}</h1>
+    <div class="contact-info">
+        {{ email }} | {{ phone }} | {{ linkedin }} | {{ location }}
+    </div>
+
+    <h2>Technical Skills</h2>
+    <p><strong>Languages & Frameworks:</strong> {{ skills | join(', ') }}</p>
+
+    <h2>Projects & Experience</h2>
+    {% for project in projects %}
+    <div class="project-item">
+        <div class="item-header">
+            <span>{{ project.name }}</span>
+            <span>{{ project.date }}</span>
+        </div>
+        <div class="item-subtitle">{{ project.role }} | {{ project.tech_stack }}</div>
+        <ul>
+            {% for bullet in project.bullets %}
+            <li>{{ bullet }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endfor %}
+
+    <h2>Education</h2>
+    <div class="item-header">
+        <span>{{ education.degree }}</span>
+        <span>{{ education.grad_year }}</span>
+    </div>
+    <div class="item-subtitle">{{ education.university }}</div>
+
+</body>
+</html>

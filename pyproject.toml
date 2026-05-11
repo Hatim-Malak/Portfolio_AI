@@ -20,6 +20,9 @@ dependencies = [
     "langgraph>=1.1.10",
     "langgraph-checkpoint-sqlite>=3.0.3",
     "langsmith>=0.8.0",
+    "playwright>=1.59.0",
+    "playwright-stealth>=2.0.3",
+    "pydoll-python>=2.22.1",
     "pygithub>=2.9.1",
     "pymongo[srv]==3.12",
     "pypdf>=6.10.2",
@@ -27,5 +30,6 @@ dependencies = [
     "rank-bm25>=0.2.2",
     "sentence-transformers>=5.4.1",
     "slowapi>=0.1.9",
+    "tavily>=1.1.0",
     "uvicorn>=0.46.0",
 ]
