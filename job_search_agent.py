@@ -14,12 +14,31 @@ from pydoll.browser.options import ChromiumOptions
 from pydoll.constants import By
 import os
 from tavily import TavilyClient
+from jinja2 import Environment, FileSystemLoader
+from fpdf import FPDF
+from fpdf.enums import XPos, YPos
 load_dotenv()
 
 
 
 llm = ChatGroq(model="llama-3.1-8b-instant",temperature=0.5)
 tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+
+class ATSResumeBuilder(FPDF):
+    def header(self):
+        pass
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font("helvetica", "I", 8)
+        self.cell(0, 10, f"Page {self.page_no()}", align="C")
+
+    def add_section_title(self, title):
+        self.set_font("helvetica", "B", 14)
+        self.set_text_color(50, 54, 67) # Deep Charcoal #323643
+        self.cell(0, 10, title, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        self.line(self.get_x(), self.get_y(), self.w - self.get_x(), self.get_y())
+        self.ln(3)
 
 class AgentState(TypedDict):
     job_url:str
@@ -123,5 +142,93 @@ def internship_search():
     except KeyboardInterrupt:
         print("\n🛑 Agent stopped by user.")
 
+def generate_fpdf_resume(resume_data: dict, output_filename: str = "Hatim_Malak_ATS_Resume.pdf"):
+    print("✍️ Ghostwriter is building your ATS PDF...")
+    
+    pdf = ATSResumeBuilder()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    
+    # --- HEADER ---
+    pdf.set_font("helvetica", "B", 24)
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(0, 10, resume_data.get("name", "Hatim Malak"), align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    
+    pdf.set_font("helvetica", "", 10)
+    pdf.set_text_color(100, 100, 100)
+    contact_info = f"{resume_data.get('email', '')} | {resume_data.get('phone', '')} | {resume_data.get('linkedin', '')}"
+    pdf.cell(0, 6, contact_info, align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.ln(5)
+
+    # --- TECHNICAL SKILLS ---
+    pdf.add_section_title("TECHNICAL SKILLS")
+    pdf.set_font("helvetica", "", 11)
+    pdf.set_text_color(0, 0, 0)
+    skills = ", ".join(resume_data.get("skills", []))
+    pdf.multi_cell(0, 6, f"Languages & Frameworks: {skills}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.ln(5)
+
+    # --- PROJECTS ---
+    pdf.add_section_title("PROJECTS & EXPERIENCE")
+    for project in resume_data.get("projects", []):
+        pdf.set_font("helvetica", "B", 12)
+        pdf.cell(130, 6, project.get("name", ""))
+        pdf.set_font("helvetica", "", 11)
+        pdf.cell(0, 6, project.get("date", ""), align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        
+        pdf.set_font("helvetica", "I", 11)
+        pdf.cell(0, 6, f"{project.get('role', '')} | {project.get('tech_stack', '')}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        
+        pdf.set_font("helvetica", "", 11)
+        for bullet in project.get("bullets", []):
+            # 1. Print the hyphen bullet without moving to a new line
+            pdf.cell(5, 6, "- ") 
+            
+            # 2. FIXED: Calculate the exact remaining width for the multi_cell
+            # Effective Width (pdf.epw) - current X offset
+            current_x = pdf.get_x()
+            safe_width = pdf.w - current_x - pdf.r_margin
+            
+            pdf.multi_cell(safe_width, 6, bullet, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(4)
+
+    # --- EDUCATION ---
+    pdf.add_section_title("EDUCATION")
+    edu = resume_data.get("education", {})
+    pdf.set_font("helvetica", "B", 12)
+    pdf.cell(130, 6, edu.get("university", "Chameli Devi Group of Institutions (CDGI), Indore"))
+    pdf.set_font("helvetica", "", 11)
+    pdf.cell(0, 6, edu.get("grad_year", "Expected 2028"), align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    
+    pdf.set_font("helvetica", "I", 11)
+    pdf.cell(0, 6, edu.get("degree", "B.Tech Information Technology"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+    pdf.output(output_filename)
+    print(f"✅ Resume successfully saved to {output_filename}")
+    return os.path.abspath(output_filename)
+
+# Test the function
 if __name__ == "__main__":
-    internship_search()
+    test_data = {
+        "name": "Hatim Malak",
+        "email": "hatim@example.com",
+        "phone": "+91 9876543210",
+        "linkedin": "linkedin.com/in/hatimmalak",
+        "skills": ["Python", "LangChain", "MERN Stack", "FastAPI"],
+        "projects": [{
+            "name": "Crumbs - Semantic Search",
+            "date": "Jan 2026 - Present",
+            "role": "Backend & AI Developer",
+            "tech_stack": "Python, ChromaDB, HuggingFace",
+            "bullets": [
+                "Engineered a semantic search system bypassing traditional keyword matching.",
+                "Integrated local LLMs to process unstructured data securely."
+            ]
+        }],
+        "education": {
+            "university": "CDGI, Indore",
+            "degree": "B.Tech Information Technology",
+            "grad_year": "Expected 2028"
+        }
+    }
+    generate_fpdf_resume(test_data)

@@ -25,3 +25,5 @@ playwright-stealth
 pydoll-python
 beautifulsoup4
 tavily
+fpdf2
+jinja2
