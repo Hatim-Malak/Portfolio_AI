@@ -11,15 +11,11 @@ from pydantic import BaseModel,Field
 from langchain_core.prompts import ChatPromptTemplate
 from config.cloudinary import upload_bytes_to_cloudinary
 from config.database import collection_name
-from models.project import Project
 from schemas.schema import list_serial
-from bson import ObjectId
 from langgraph.types import Send
 from typing import Literal
 from pymongo import UpdateOne
 import time
-import random
-from huggingface_hub import InferenceClient
 import threading
 load_dotenv()
 
@@ -186,9 +182,11 @@ def fetch_all_repos_and_readmes(state:SuperGraphState) -> dict:
             if len(ls) >= 5:
                 print("\nReached batch limit of 5 projects. Stopping fetch for this run.")
                 break
-            
+            if repo.fork:
+                continue
             repo_updated_str = str(repo.updated_at)
             if repo.name in ignore_repo:
+                collection_name.delete_one({"title":repo.name})
                 continue
             
             if repo.name in existing_projects_map:
