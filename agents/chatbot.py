@@ -20,7 +20,6 @@ compressed_projects = []
 for proj in raw_projects:
     compressed_projects.append({
         "name": proj.get("name", "Unknown Project"),
-        # Slice the description so massive readmes don't break the prompt
         "description": str(proj.get("description", "No description available"))[:300], 
         "url": proj.get("html_url", "No link"),
         "language": proj.get("language", "Unknown")
@@ -129,7 +128,7 @@ def fetch_required_fields(state:ChatState) -> dict:
         return {"required_fields": response.fields}
     except Exception as e:
         print("Error fetching required fields:", e)
-        return {"required_fields": ["about","projects", "contact"]} # fail safe to return all fields if there's an error
+        return {"required_fields": ["about","projects", "contact"]} 
 
 def chat_model(state:ChatState) -> dict:
     """Generates a response to the user's query based on the required fields and updates the state"""
