@@ -89,7 +89,7 @@ class ChatState(TypedDict):
 def manage_memory(state:ChatState) -> dict:
     """Trims the conversation to keep only the most recent message"""
     messages = state["messages"]
-    window_size = 10
+    window_size = 9
     
     if len(messages) > window_size:
         old_messages = messages[:-window_size]
