@@ -172,7 +172,7 @@ def fetch_all_repos_and_readmes(state:SuperGraphState) -> dict:
     """Iterates through all repositories and fetches their README content."""
     try:
         projects = list_serial(collection_name.find())
-        ignore_repo = ["Hatim-Malak","spring-boot-demo","spring_security","lunaris"]
+        ignore_repo = ["Hatim-Malak","Spring-boot-demo","spring_security","lunaris2.0","lunaris"]
         existing_projects_map = {p["title"]: str(p.get("updated_at")) for p in projects}
         g = Github(github_token)
         user = g.get_user()    
@@ -219,6 +219,7 @@ def fetch_all_repos_and_readmes(state:SuperGraphState) -> dict:
             
             except Exception:
                 print(f"No README found for {repo.name}, skipping...")
+                collection_name.delete_one({"title": repo.name})
                 continue
         if ls == []:
             return {

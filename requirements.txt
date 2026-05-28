@@ -9,6 +9,7 @@ langchain-huggingface
 langchain-tavily
 langgraph
 langgraph-checkpoint-sqlite
+langgraph-checkpoint-mongodb
 langsmith
 pypdf
 python-dotenv
@@ -16,7 +17,7 @@ rank-bm25
 sentence-transformers
 fastapi
 uvicorn
-pymongo[srv]==3.12
+pymongo[srv]>=4.9.0
 cloudinary
 pygithub
 slowapi
