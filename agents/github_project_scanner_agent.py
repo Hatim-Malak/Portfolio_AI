@@ -11,6 +11,7 @@ from pydantic import BaseModel,Field
 from langchain_core.prompts import ChatPromptTemplate
 from config.cloudinary import upload_bytes_to_cloudinary
 from config.database import collection_name
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from schemas.schema import list_serial
 from langgraph.types import Send
 from typing import Literal
@@ -49,6 +50,33 @@ def subGraph() -> StateGraph:
     def detail_generator(state:SubGraphState) -> dict:
         """It generate the description and what languages used through analysing readme of the project"""
         
+        raw_readme = state.get("readme","")
+        
+        MAX_SAFE_LENGTH = 12000
+        
+        if len(raw_readme) > MAX_SAFE_LENGTH:
+            print(f"README too large ({len(raw_readme)} chars). Initiating Map-Reduce...")
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=8000,
+                chunk_overlap=500,
+            )
+            
+            chunks = text_splitter.split_text(raw_readme)
+            
+            map_prompt = ChatPromptTemplate.from_template(
+                "Extract the core features, problems solved, and any programming languages/tools mentioned in this README chunk:\n\n{chunk}"
+            )
+            
+            mapped_summaries = []
+            for i,chunk in enumerate(chunks):
+                formatted_map = map_prompt.format_messages(chunk = chunk)
+                
+                chunk_result = llm.invoke(formatted_map)
+                mapped_summaries.append(chunk_result.content)
+            processed_readme_context = "\n\n--- Next Chunk Summary ---\n\n".join(mapped_summaries)
+        else:
+            processed_readme_context = raw_readme
+               
         prompt = ChatPromptTemplate.from_messages([
         (
             "system",
@@ -72,7 +100,7 @@ def subGraph() -> StateGraph:
             "Analyze the following README content and extract the details:\n\n{readme}"
         )
         ])
-        formatted_message = prompt.format_messages(readme=state["readme"])
+        formatted_message = prompt.format_messages(readme=processed_readme_context)
         result = None
         for attempt in range(5): 
             try:
@@ -102,10 +130,8 @@ def subGraph() -> StateGraph:
             f"Displayed in 3D isometric perspective."
         )
         
-        # Point to your custom Cloudflare Worker
         API_URL = os.getenv("CLOUDFLARE_WORKER_URL")
         
-        # Optional: If you secured your worker, pass the token. Otherwise, an empty dict is fine.
         headers = {"Authorization": f"Bearer {os.getenv('CLOUDFLARE_API_KEY')}"} if os.getenv('CLOUDFLARE_API_KEY') else {}
         
         dims = {
@@ -119,7 +145,7 @@ def subGraph() -> StateGraph:
                 print(f"🚀 Fetching {view_name} for {state['title']} via YOUR Cloudflare Worker...")
                 
                 try:
-                    # --- YOUR CUSTOM LOCK ---
+
                     with cf_lock:
                         time.sleep(2) # Just a small 2-second buffer
                         

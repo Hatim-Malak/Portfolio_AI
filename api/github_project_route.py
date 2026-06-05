@@ -72,7 +72,6 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                     ai_message = node_data["messages"][-1].content
                     route_decision = node_data.get("route", "None")
                     
-                    # Send the JSON payload back to your React frontend
                     await websocket.send_json({
                         "role": "ai",
                         "content": ai_message,
