@@ -1,17 +1,21 @@
-import email
-from pydantic._internal._known_annotated_metadata import SET_CONSTRAINTS
-from datetime import datetime,timedelta,timezone
-
-from fastapi import Depends,HTTPException,status
-from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError,jwt
-from passlib.context import CryptContext
 import os
+import uuid
+from datetime import datetime, timedelta, timezone
+
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from jose import JWTError, jwt
+from passlib.context import CryptContext
 from dotenv import load_dotenv
+
 from config.database import collection_user_name, collection_blacklist
 
 load_dotenv()
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here")
+
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("CRITICAL: SECRET_KEY environment variable is missing. Server cannot start securely.")
+
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 
@@ -32,9 +36,13 @@ def verify_password(plain_password:str,hashed_password:str) -> bool:
 def create_access_token(data:dict):
     to_encode = data.copy()
 
-    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    
     to_encode.update({
-        "exp":expire
+        "exp": expire,
+        "iat": now,
+        "jti": uuid.uuid4().hex
     })
 
     encoded_jwt = jwt.encode(
@@ -54,17 +62,9 @@ async def get_current_user(
 ):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail = "Could not validate credentials",
-        headers = {"WWW-Authenticate": "Bearer"}
+        detail="Invalid credentials or token expired",
+        headers={"WWW-Authenticate": "Bearer"}
     )
-
-    is_blacklisted = collection_blacklist.find_one({"token": token})
-    if is_blacklisted:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has been logged out",
-            headers={"WWW-Authenticate": "Bearer"}
-        )
 
     try:
         payload = jwt.decode(
@@ -74,12 +74,21 @@ async def get_current_user(
         )
         
         email = payload.get("sub")
-        if email is None:
+        jti = payload.get("jti")
+        
+        if email is None or jti is None:
             raise credentials_exception
 
     except JWTError:
         raise credentials_exception
 
+    is_blacklisted = collection_blacklist.find_one({"jti": jti})
+    if is_blacklisted:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been logged out",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
 
     user = collection_user_name.find_one({
         "email": email
@@ -89,3 +98,11 @@ async def get_current_user(
         raise credentials_exception
 
     return user
+
+async def get_current_admin(current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Not authorized to perform this action."
+        )
+    return current_user

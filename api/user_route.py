@@ -1,5 +1,7 @@
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Request
 from fastapi.security import OAuth2PasswordRequestForm
+from config.rate_limiter import limiter
+from jose import jwt
 
 from config.database import collection_user_name, collection_blacklist
 from datetime import datetime, timezone
@@ -11,30 +13,26 @@ from config.auth import (
     oauth2_scheme
 )
 
-
-
 router = APIRouter(
     prefix="/users",
     tags=["Users"]
 )
 
 @router.post("/login")
+@limiter.limit("5/minute")
 async def login_user(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends()
 ):
-
     user = collection_user_name.find_one({
         "email": form_data.username
     })
 
     if not user:
-
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
-            headers={
-                "WWW-Authenticate": "Bearer"
-            }
+            headers={"WWW-Authenticate": "Bearer"}
         )
 
     password_valid = verify_password(
@@ -43,13 +41,10 @@ async def login_user(
     )
 
     if not password_valid:
-
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
-            headers={
-                "WWW-Authenticate": "Bearer"
-            }
+            headers={"WWW-Authenticate": "Bearer"}
         )
 
     access_token = create_access_token({
@@ -81,10 +76,22 @@ async def logout_user(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Log out the user by blacklisting their current token.
+    Log out the user by blacklisting their current token's JTI.
     """
-    collection_blacklist.insert_one({
-        "token": token,
-        "blacklisted_on": datetime.now(timezone.utc)
-    })
-    return {"message": "Successfully logged out"}
+    try:
+        # We don't need to verify signature here because get_current_user already did
+        payload = jwt.get_unverified_claims(token)
+        jti = payload.get("jti")
+        exp = payload.get("exp")
+        
+        if not jti or not exp:
+            raise HTTPException(status_code=400, detail="Invalid token structure")
+            
+        collection_blacklist.insert_one({
+            "jti": jti,
+            "expiresAt": datetime.fromtimestamp(exp, tz=timezone.utc),
+            "blacklisted_on": datetime.now(timezone.utc)
+        })
+        return {"message": "Successfully logged out"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Error processing logout")

@@ -30,8 +30,9 @@ class SubGraphState(TypedDict):
     readme:str
     description:str
     languages:dict
-    mobile_url:str
-    desktop_url:str
+    mobile_url:list[str]
+    desktop_url:list[str]
+    is_update:bool
     updated_at: str
     github_link:str
     live_link:str
@@ -158,6 +159,10 @@ def subGraph() -> StateGraph:
         }
     
     def image_generator(state:SubGraphState) -> dict:
+        if state.get("is_update"):
+            print(f"Update detected for {state['title']}. Skipping Cloudflare image generation to preserve manual uploads.")
+            return {}
+
         refined_prompt = (
             f"A beautiful, high-resolution UI/UX mockup of a SaaS web application for: {state['description']}. "
             f"The interface features a dark mode theme with glowing neon blue and purple accents. "
@@ -202,7 +207,7 @@ def subGraph() -> StateGraph:
                         # Cloudflare workers usually return raw image bytes, which Cloudinary accepts instantly
                         url = upload_bytes_to_cloudinary(response.content)
                         if url:
-                            updates[f"{view_name}_url"] = url
+                            updates[f"{view_name}_url"] = [url]
                             print(f"Successfully uploaded {view_name} for {state['title']}")
                             break 
                     else:
@@ -257,8 +262,10 @@ def fetch_all_repos_and_readmes(state:SuperGraphState) -> dict:
                     continue 
                 else:
                     print(f"Update detected for {repo.name}! Processing new changes...")
+                    is_update = True
             else:
                 print(f"New project found: {repo.name}!")
+                is_update = False
                 
             print(f"--- Processing: {repo.full_name} ---")
             try:
@@ -273,6 +280,7 @@ def fetch_all_repos_and_readmes(state:SuperGraphState) -> dict:
                     "updated_at":repo_updated_str,
                     "github_link":github_link,
                     "live_link":live_link,
+                    "is_update": is_update
                 }
                 ls.append(project_data)
                 print(f"Successfully fetched data for {repo.name}")
@@ -299,7 +307,7 @@ def dispatch_sub_graph(state:SuperGraphState) -> list[Send]:
     if state.get("route") == "end":
         return END
     return [
-        Send("run_project_subgraph",{"title":detail["title"],"readme":detail["readme"],"updated_at":detail["updated_at"],"github_link":detail["github_link"],"live_link":detail["live_link"]}) for detail in state["details"] 
+        Send("run_project_subgraph",{"title":detail["title"],"readme":detail["readme"],"updated_at":detail["updated_at"],"github_link":detail["github_link"],"live_link":detail["live_link"], "is_update": detail.get("is_update", False)}) for detail in state["details"] 
     ]
 
 def save_projects(state:SuperGraphState) -> dict:
@@ -315,9 +323,10 @@ def save_projects(state:SuperGraphState) -> dict:
     try:
         operations = []
         for project in completed_projects:
+            project_to_save = {k: v for k, v in project.items() if k != "is_update"}
             operation = UpdateOne(
-                {"title": project["title"]}, 
-                {"$set": project}, 
+                {"title": project_to_save["title"]}, 
+                {"$set": project_to_save}, 
                 upsert=True
             )
             operations.append(operation)

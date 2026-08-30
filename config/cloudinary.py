@@ -20,11 +20,14 @@ def upload_bytes_to_cloudinary(image_bytes):
         print(f"Cloudinary Error: {e}")
         return None
 
+import asyncio
+
 async def upload_fastapi_file(file: UploadFile):
     try:
         # Use upload_large and pass the file stream directly. 
         # This prevents loading huge videos into RAM and prevents timeout/connection aborted errors.
-        result = upload_large(file.file, resource_type="auto")
+        # Run it in a separate thread so it doesn't block the FastAPI event loop
+        result = await asyncio.to_thread(upload_large, file.file, resource_type="auto")
         return result.get("secure_url")
     except Exception as e:
         print(f"Cloudinary Error: {e}")

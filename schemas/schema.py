@@ -1,3 +1,10 @@
+def ensure_list(item):
+    if isinstance(item, list):
+        return item
+    if isinstance(item, str) and item:
+        return [item]
+    return []
+
 def individual_serial(project) -> dict:
     return {
         "id":str(project["_id"]),
@@ -5,13 +12,12 @@ def individual_serial(project) -> dict:
         "readme":project.get("readme", ""),
         "description":project.get("description", ""),
         "languages":project.get("languages", {}),
-        "mobile_url":project.get("mobile_url", ""),
-        "desktop_url":project.get("desktop_url", ""),
+        "mobile_url": ensure_list(project.get("mobile_url")),
+        "desktop_url": ensure_list(project.get("desktop_url")),
         "updated_at":project.get("updated_at", ""),
         "github_link":project.get("github_link", ""),
         "live_link":project.get("live_link", ""),
-        "video": project.get("video"),
-        "gallery": project.get("gallery", [])
+        "video": project.get("video")
     }
 
 def list_serial(projects) -> list:

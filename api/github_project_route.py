@@ -10,8 +10,17 @@ from slowapi.util import get_remote_address
 from config.rate_limiter import limiter
 from models.project import ProjectUpdate
 from bson import ObjectId
-from config.auth import get_current_user
+from bson.errors import InvalidId
+from config.auth import get_current_user, get_current_admin
 from config.cloudinary import upload_fastapi_file
+import os
+import asyncio
+import io
+from PIL import Image, UnidentifiedImageError
+
+# Simple in-memory connection tracker for WebSockets
+active_ws_connections: dict[str, int] = {}
+WS_MAX_CONNECTIONS_PER_IP = 5
 
 router = APIRouter(prefix="/projects",tags=["projects"])
 
@@ -19,17 +28,11 @@ router = APIRouter(prefix="/projects",tags=["projects"])
 def update_project(
     project_id: str, 
     project_update: ProjectUpdate,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_admin)
 ):
-    if current_user.get("role") != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="Not authorized to update projects"
-        )
-    
     try:
         obj_id = ObjectId(project_id)
-    except:
+    except InvalidId:
         raise HTTPException(status_code=400, detail="Invalid project ID format")
     
     update_data = {k: v for k, v in project_update.model_dump().items() if v is not None}
@@ -51,17 +54,11 @@ def update_project(
 @router.delete("/{project_id}")
 def delete_project(
     project_id: str, 
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_admin)
 ):
-    if current_user.get("role") != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="Not authorized to delete projects"
-        )
-    
     try:
         obj_id = ObjectId(project_id)
-    except:
+    except InvalidId:
         raise HTTPException(status_code=400, detail="Invalid project ID format")
         
     result = collection_name.delete_one({"_id": obj_id})
@@ -72,29 +69,49 @@ def delete_project(
     return {"message": "Project deleted successfully"}
 
 @router.post("/{project_id}/media")
+@limiter.limit("5/minute")
 async def upload_project_media(
+    request: Request,
     project_id: str,
     file: UploadFile = File(...),
     field_type: str = Form(...),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_admin)
 ):
-    if current_user.get("role") != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="Not authorized to upload media"
-        )
-    
     try:
         obj_id = ObjectId(project_id)
-    except:
+    except InvalidId:
         raise HTTPException(status_code=400, detail="Invalid project ID format")
         
     project = collection_name.find_one({"_id": obj_id})
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    if field_type not in ["gallery", "mobile_url", "desktop_url"]:
-        raise HTTPException(status_code=400, detail="field_type must be 'gallery', 'mobile_url', or 'desktop_url'. Videos should be uploaded to YouTube and linked via the update route.")
+    if field_type not in ["mobile_url", "desktop_url"]:
+        raise HTTPException(status_code=400, detail="field_type must be 'mobile_url' or 'desktop_url'. Videos should be uploaded to YouTube and linked via the update route.")
+
+    # Validate file size (max 10MB)
+    file.file.seek(0, os.SEEK_END)
+    file_size = file.file.tell()
+    file.file.seek(0)
+    if file_size > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large. Max 10MB allowed.")
+
+    # Validate actual image bytes
+    try:
+        file_bytes = await file.read()
+        image = Image.open(io.BytesIO(file_bytes))
+        image.verify()
+        if image.format not in ["JPEG", "PNG", "WEBP", "MPO"]:
+            raise HTTPException(status_code=400, detail=f"Unsupported image format: {image.format}. Allowed: JPEG, PNG, WEBP.")
+        
+        # Reset file pointer for Cloudinary upload
+        file.file.seek(0)
+    except UnidentifiedImageError:
+        raise HTTPException(status_code=400, detail="Invalid image file bytes.")
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=400, detail="Error validating image.")
 
     # Upload to Cloudinary
     url = await upload_fastapi_file(file)
@@ -102,35 +119,38 @@ async def upload_project_media(
         raise HTTPException(status_code=500, detail="Failed to upload file to Cloudinary")
 
     # Update database
-    if field_type == "gallery":
-        collection_name.update_one({"_id": obj_id}, {"$push": {"gallery": url}})
-    elif field_type == "mobile_url":
-        collection_name.update_one({"_id": obj_id}, {"$set": {"mobile_url": url}})
+    if field_type == "mobile_url":
+        collection_name.update_one({"_id": obj_id}, {"$push": {"mobile_url": url}})
     elif field_type == "desktop_url":
-        collection_name.update_one({"_id": obj_id}, {"$set": {"desktop_url": url}})
+        collection_name.update_one({"_id": obj_id}, {"$push": {"desktop_url": url}})
 
     updated_project = collection_name.find_one({"_id": obj_id})
     return individual_serial(updated_project)
 
 @router.get("/")
-def get_all_projects():
+@limiter.limit("30/minute")
+def get_all_projects(request: Request):
     """Instantly fetches all projects from the database."""
     projects = list_serial(collection_name.find())
     return projects
 
-@router.get("/agent")
+@router.post("/agent")
 @limiter.limit("1/5 minute")
-def get_projects(request: Request):
+def post_projects_agent(request: Request):
     """Triggers the GitHub scanner agent and then returns projects."""
-    agent = build_portfolio_agent()
+    agent = request.app.state.portfolio_agent
+    # Run the graph synchronously inside a separate thread to prevent blocking
+    # Using asyncio.run inside to_thread doesn't work if it's already async, 
+    # but agent.invoke is sync so it blocks. Let's just call it. Wait, the endpoint is NOT async def, 
+    # so FastAPI runs it in a threadpool natively!
     agent.invoke({})
     todos = list_serial(collection_name.find())
     return todos
 
 @router.get("/chatbot/history/{session_id}")
-def get_chat_history(session_id: str):
+def get_chat_history(request: Request, session_id: str):
     """Fetches the previous messages for a user session."""
-    agent = build_chatbot_agent()
+    agent = request.app.state.chatbot_agent
     config = {"configurable": {"thread_id": session_id}}
     
     current_state = agent.get_state(config=config)
@@ -150,12 +170,28 @@ def get_chat_history(session_id: str):
 @router.websocket("/chatbot/ws/{session_id}")
 async def websocket_chat(websocket: WebSocket, session_id: str):
     """Handles real-time bi-directional chat over WebSockets."""
+    client_ip = websocket.client.host if websocket.client else "unknown"
+    origin = websocket.headers.get("origin")
+    allowed_origin = os.getenv("ALLOWED_ORIGIN")
     
+    if origin and allowed_origin and origin != allowed_origin:
+        print(f"Rejected WS connection from unallowed origin: {origin}")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    # Check connection limits
+    current_connections = active_ws_connections.get(client_ip, 0)
+    if current_connections >= WS_MAX_CONNECTIONS_PER_IP:
+        print(f"Rejected WS connection from {client_ip} due to rate limiting")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
     # 1. Accept the WebSocket connection from the frontend
     await websocket.accept()
+    active_ws_connections[client_ip] = current_connections + 1
     
     # 2. Initialize the agent and the specific user's config
-    agent = build_chatbot_agent()
+    agent = websocket.app.state.chatbot_agent
     config = {"configurable": {"thread_id": session_id}}
 
     try:
@@ -189,3 +225,8 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
     except WebSocketDisconnect:
         # The user closed the browser or disconnected
         print(f"User {session_id} disconnected from WebSocket.")
+    finally:
+        if client_ip in active_ws_connections:
+            active_ws_connections[client_ip] -= 1
+            if active_ws_connections[client_ip] <= 0:
+                del active_ws_connections[client_ip]
