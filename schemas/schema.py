@@ -1,15 +1,17 @@
 def individual_serial(project) -> dict:
     return {
         "id":str(project["_id"]),
-        "title":project["title"],
-        "readme":project["readme"],
-        "description":project["description"],
-        "languages":project["languages"],
-        "mobile_url":project["mobile_url"],
-        "desktop_url":project["desktop_url"],
-        "updated_at":project["updated_at"],
-        "github_link":project["github_link"],
-        "live_link":project["live_link"]
+        "title":project.get("title", ""),
+        "readme":project.get("readme", ""),
+        "description":project.get("description", ""),
+        "languages":project.get("languages", {}),
+        "mobile_url":project.get("mobile_url", ""),
+        "desktop_url":project.get("desktop_url", ""),
+        "updated_at":project.get("updated_at", ""),
+        "github_link":project.get("github_link", ""),
+        "live_link":project.get("live_link", ""),
+        "video": project.get("video"),
+        "gallery": project.get("gallery", [])
     }
 
 def list_serial(projects) -> list:

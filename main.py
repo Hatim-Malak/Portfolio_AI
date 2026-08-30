@@ -6,7 +6,8 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 # Import your router and the shared limiter
-from api.github_project_route import router
+from api.github_project_route import router as project_router
+from api.user_route import router as user_router
 from config.rate_limiter import limiter
 
 load_dotenv()
@@ -31,7 +32,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(router)
+app.include_router(project_router)
+app.include_router(user_router)
 
 @app.get("/ping")
 def keep_alive():

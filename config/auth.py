@@ -8,12 +8,12 @@ from jose import JWTError,jwt
 from passlib.context import CryptContext
 import os
 from dotenv import load_dotenv
-from config.database import collection_user_name
+from config.database import collection_user_name, collection_blacklist
 
 load_dotenv()
-SECRET_KEY = os.getenv("SECRET_KEY")
-ALGORITHM = os.getenv("ALGORITHM")
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES"))
+SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here")
+ALGORITHM = os.getenv("ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 
 pwd_context = CryptContext(
     schemes=["bcrypt"],
@@ -57,6 +57,14 @@ async def get_current_user(
         detail = "Could not validate credentials",
         headers = {"WWW-Authenticate": "Bearer"}
     )
+
+    is_blacklisted = collection_blacklist.find_one({"token": token})
+    if is_blacklisted:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been logged out",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
 
     try:
         payload = jwt.decode(
