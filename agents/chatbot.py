@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from schemas.schema import list_serial
 
 load_dotenv()
-llm = ChatGroq(model="llama-3.3-70b-versatile",temperature=0.5)
+llm = ChatGroq(model="openai/gpt-oss-120b",temperature=0.5)
 
 raw_projects = list_serial(collection_name.find())
 compressed_projects = []
@@ -164,7 +164,7 @@ def chat_model(state:ChatState) -> dict:
         response = chain.invoke({"relevant_data": relevant_data, "query": query})
         return {"messages":[AIMessage(content=response.response_text)], "route": response.route}
     except Exception as e:
-        print(f"⚠️ Chat Model Error (Rate limit/Token): {e}")
+        print(f"Chat Model Error (Rate limit/Token): {e}")
         fallback_text = (
             "I'm experiencing a very high volume of requests right now and need a quick breather! "
             "Please try asking again in a few seconds, or feel free to check out the Contact section to reach Hatim directly."

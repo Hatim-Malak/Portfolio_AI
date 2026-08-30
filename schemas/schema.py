@@ -14,3 +14,13 @@ def individual_serial(project) -> dict:
 
 def list_serial(projects) -> list:
     return [individual_serial(project) for project in projects]
+
+def individual_user_serial(user):
+    return {
+        "id":str(user["_id"]),
+        "email":user["email"],
+        "passwordHash":user["passwordHash"],
+    }
+
+def list_user_serial(users):
+    return [individual_user_serial(user) for user in users]

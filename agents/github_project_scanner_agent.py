@@ -18,11 +18,12 @@ from typing import Literal
 from pymongo import UpdateOne
 import time
 import threading
+import json
 load_dotenv()
 
 cf_lock = threading.Lock()
 github_token = os.getenv("GITHUB_API")
-llm = ChatGroq(model="llama-3.1-8b-instant",temperature=0.5)
+llm = ChatGroq(model="qwen/qwen3.8-27b", temperature=0.5)
 
 class SubGraphState(TypedDict):
     title:str
@@ -41,18 +42,13 @@ class SuperGraphState(TypedDict):
     route:Literal["subGraph","end"]
     
 def subGraph() -> StateGraph:
-    class details(BaseModel):
-        description: str = Field(description="A concise 8-line summary of the project's purpose and functionality.")
-        languages: dict = Field(description="A dictionary of programming languages used and their estimated percentage.")
-
-    detail_llm = llm.with_structured_output(details)
     
     def detail_generator(state:SubGraphState) -> dict:
         """It generate the description and what languages used through analysing readme of the project"""
         
         raw_readme = state.get("readme","")
         
-        MAX_SAFE_LENGTH = 12000
+        MAX_SAFE_LENGTH = 15000
         
         if len(raw_readme) > MAX_SAFE_LENGTH:
             print(f"README too large ({len(raw_readme)} chars). Initiating Map-Reduce...")
@@ -68,11 +64,25 @@ def subGraph() -> StateGraph:
             )
             
             mapped_summaries = []
-            for i,chunk in enumerate(chunks):
-                formatted_map = map_prompt.format_messages(chunk = chunk)
+            for i, chunk in enumerate(chunks):
+                formatted_map = map_prompt.format_messages(chunk=chunk)
                 
-                chunk_result = llm.invoke(formatted_map)
-                mapped_summaries.append(chunk_result.content)
+                chunk_result = None
+                for attempt in range(5):
+                    try:
+                        chunk_result = llm.invoke(formatted_map)
+                        break
+                    except Exception as e:
+                        if "429" in str(e) or "rate_limit" in str(e).lower():
+                            wait_time = 15 * (2 ** attempt)  # Exponential backoff: 15s, 30s, 60s, 120s, 240s (free tier)
+                            print(f"Rate limit hit on chunk {i+1}/{len(chunks)} for {state['title']}. Waiting {wait_time}s... (Attempt {attempt+1}/5)")
+                            time.sleep(wait_time)
+                        else:
+                            raise e
+                
+                if chunk_result:
+                    mapped_summaries.append(chunk_result.content)
+                    time.sleep(3)  # 3-second delay between chunks for free tier
             processed_readme_context = "\n\n--- Next Chunk Summary ---\n\n".join(mapped_summaries)
         else:
             processed_readme_context = raw_readme
@@ -91,9 +101,8 @@ def subGraph() -> StateGraph:
             2. LANGUAGES & TOOLS: List the primary programming languages and frameworks found.
 
             OUTPUT FORMAT:
-            Return your response in a valid JSON-like structure (or plain text if preferred) with these keys:
-            - description
-            - languages"""
+            Return your response in valid JSON with these keys:
+            {{"description": "...", "languages": {{...}}}}"""
         ),
         (
             "human", 
@@ -104,12 +113,13 @@ def subGraph() -> StateGraph:
         result = None
         for attempt in range(5): 
             try:
-                result = detail_llm.invoke(formatted_message)
+                result = llm.invoke(formatted_message)
                 break 
             except Exception as e:
                 if "429" in str(e) or "rate_limit" in str(e).lower():
-                    print(f"Groq Rate Limit hit for {state['title']}. Waiting 10 seconds... (Attempt {attempt+1}/5)")
-                    time.sleep(10)
+                    wait_time = 15 * (2 ** attempt)  # Exponential backoff: 15s, 30s, 60s, 120s, 240s (free tier)
+                    print(f"Groq Rate Limit hit for {state['title']}. Waiting {wait_time}s... (Attempt {attempt+1}/5)")
+                    time.sleep(wait_time)
                 else:
                     print(f"Groq error: {e}")
                     raise e 
@@ -117,9 +127,34 @@ def subGraph() -> StateGraph:
         if not result:
             return {"description": "Description generation failed.", "languages": {}}
         
+        # Parse JSON response manually
+        try:
+            content = result.content
+            
+            # Handle markdown code blocks (```json...```)
+            if "```json" in content:
+                # Extract JSON from markdown code block
+                start_idx = content.find("```json") + 7
+                end_idx = content.find("```", start_idx)
+                if end_idx != -1:
+                    content = content[start_idx:end_idx].strip()
+            elif "```" in content:
+                # Extract from generic code block
+                start_idx = content.find("```") + 3
+                end_idx = content.find("```", start_idx)
+                if end_idx != -1:
+                    content = content[start_idx:end_idx].strip()
+            
+            parsed = json.loads(content)
+            description = parsed.get("description", "")
+            languages = parsed.get("languages", {})
+        except json.JSONDecodeError as e:
+            print(f"Failed to parse JSON for {state['title']}. Raw response: {content}")
+            return {"description": "Failed to parse response.", "languages": {}}
+        
         return {
-            "description":result.description,
-            "languages":result.languages
+            "description": description,
+            "languages": languages
         }
     
     def image_generator(state:SubGraphState) -> dict:
@@ -198,7 +233,7 @@ def fetch_all_repos_and_readmes(state:SuperGraphState) -> dict:
     """Iterates through all repositories and fetches their README content."""
     try:
         projects = list_serial(collection_name.find())
-        ignore_repo = ["Hatim-Malak","Spring-boot-demo","spring_security","lunaris2.0","lunaris"]
+        ignore_repo = ["Hatim-Malak","Spring-boot-demo","spring_security","lunaris2.0","lunaris","admin-dashboard"]
         existing_projects_map = {p["title"]: str(p.get("updated_at")) for p in projects}
         g = Github(github_token)
         user = g.get_user()    

@@ -16,4 +16,5 @@ except Exception as e:
 
 db = client.portfolio
 collection_name = db["projects"]
+collection_user_name = db["user"]
 

@@ -16,4 +16,6 @@ rank-bm25
 slowapi
 uvicorn
 websockets
-
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
