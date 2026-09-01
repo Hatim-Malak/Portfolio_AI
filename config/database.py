@@ -18,3 +18,4 @@ db = client.portfolio
 collection_name = db["projects"]
 collection_user_name = db["user"]
 collection_blacklist = db["blacklist"]
+collection_resume = db["resume"]

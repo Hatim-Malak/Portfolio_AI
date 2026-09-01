@@ -37,6 +37,9 @@ def update_project(
     
     update_data = {k: v for k, v in project_update.model_dump().items() if v is not None}
     
+    if "languages" in update_data:
+        update_data["manual_languages"] = True
+    
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
         
@@ -173,8 +176,9 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
     client_ip = websocket.client.host if websocket.client else "unknown"
     origin = websocket.headers.get("origin")
     allowed_origin = os.getenv("ALLOWED_ORIGIN")
+    allowed_origins = [allowed_origin, "http://localhost:5173", "http://127.0.0.1:5173"] if allowed_origin else ["http://localhost:5173", "http://127.0.0.1:5173"]
     
-    if origin and allowed_origin and origin != allowed_origin:
+    if origin and origin not in allowed_origins:
         print(f"Rejected WS connection from unallowed origin: {origin}")
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
@@ -207,20 +211,26 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
             }
             
             # Process through LangGraph asynchronously
-            # .astream yields updates as each node finishes
-            async for event in agent.astream(graph_input, config=config):
+            # .astream_events streams internal LLM tokens
+            async for event in agent.astream_events(graph_input, config=config, version="v2"):
                 
-                # We only want to send data back to the user when the chat_model node is done
-                if "chat_model" in event:
-                    node_data = event["chat_model"]
-                    ai_message = node_data["messages"][-1].content
-                    route_decision = node_data.get("route", "None")
-                    
-                    await websocket.send_json({
-                        "role": "ai",
-                        "content": ai_message,
-                        "route": route_decision
-                    })
+                # Stream the main chat model tokens to the frontend
+                if event["event"] == "on_chat_model_stream" and "main_chat" in event.get("tags", []):
+                    chunk = event["data"]["chunk"]
+                    if chunk.content:
+                        await websocket.send_json({
+                            "type": "chunk",
+                            "content": chunk.content
+                        })
+                        
+                # When the chat_model node finishes, send the final route
+                elif event["event"] == "on_chain_end" and event["name"] == "chat_model":
+                    output = event["data"]["output"]
+                    if isinstance(output, dict) and "route" in output:
+                        await websocket.send_json({
+                            "type": "done",
+                            "route": output["route"]
+                        })
                     
     except WebSocketDisconnect:
         # The user closed the browser or disconnected

@@ -321,9 +321,20 @@ def save_projects(state:SuperGraphState) -> dict:
     print(f"Preparing project to save {len(completed_projects)} projects to mongodb")
     
     try:
+        # Check which projects have their languages manually updated
+        titles_to_check = [p["title"] for p in completed_projects]
+        existing_docs = list(collection_name.find({"title": {"$in": titles_to_check}}))
+        manual_lang_titles = {p["title"] for p in existing_docs if p.get("manual_languages")}
+
         operations = []
         for project in completed_projects:
             project_to_save = {k: v for k, v in project.items() if k != "is_update"}
+            
+            # If the languages were manually updated, do not overwrite them
+            if project_to_save["title"] in manual_lang_titles:
+                if "languages" in project_to_save:
+                    del project_to_save["languages"]
+            
             operation = UpdateOne(
                 {"title": project_to_save["title"]}, 
                 {"$set": project_to_save}, 

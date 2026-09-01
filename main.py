@@ -10,6 +10,7 @@ from slowapi.errors import RateLimitExceeded
 # Import your router and the shared limiter
 from api.github_project_route import router as project_router
 from api.user_route import router as user_router
+from api.resume_route import router as resume_router
 from config.rate_limiter import limiter
 from agents.github_project_scanner_agent import build_portfolio_agent
 from agents.chatbot import build_chatbot_agent
@@ -56,6 +57,7 @@ app.add_middleware(
 
 app.include_router(project_router)
 app.include_router(user_router)
+app.include_router(resume_router)
 
 @app.get("/ping")
 def keep_alive():
